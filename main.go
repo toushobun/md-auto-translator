@@ -1,60 +1,87 @@
 package main
 
 import (
-	"context"
+	"bytes"
+	"flag"
 	"fmt"
-	"log"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
-	"github.com/joho/godotenv"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
-func main() {
-	// 获取 api key
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-		panic(err)
-	}
-	apiKey := os.Getenv("OPENAI_API_KEY")
+var (
+	srcDir string
+	outDir string
+	target string
+)
 
-	fileName := "toutest.md"
-	// 读取文件内容
-	data, err := os.ReadFile(fmt.Sprintf("./original/%s", fileName))
-	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
-		panic(err)
-	}
+// go run main.go --src=./testFile/original/toutest.md --out=./testFile/result
+func init() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339Nano})
+	flag.StringVar(&srcDir, "src", "", "source directory")
+	flag.StringVar(&outDir, "out", "", "out directory")
+	flag.StringVar(&target, "target", "en", "target languages(en/ja/...)")
+}
 
-	// 读取规则
-	rule, err := os.ReadFile("./config/rule.md")
-	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
-		panic(err)
-	}
+func run() error {
 
-	client := openai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
+	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
 
-	resp, err := client.Responses.New(context.TODO(), responses.ResponseNewParams{
-		Model: "gpt-5-nano",
-		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(string(rule) + "\n\n" + string(data))},
+		// TODO: process file
+		createScaffold(path, srcDir, outDir, target)
+		return nil
 	})
+}
 
-	if err != nil {
-		log.Fatalf("Response New error: %v", err)
-		panic(err.Error())
+func createScaffold(srcPath, srcRoot, outRoot, target string) {
+	targetPath := strings.Replace(srcPath, srcRoot, filepath.Join(outRoot, target+".md"), 1)
+
+	if _, err := os.Stat(targetPath); err == nil {
+		return // already exists
 	}
 
-	result := resp.OutputText()
-	fmt.Println(result)
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		fmt.Println("read failed:", srcPath)
+		return
+	}
 
-	if err = os.WriteFile(fmt.Sprintf("./result/%s", fileName), []byte(result), 0644); err != nil {
-		log.Fatalf("failed to write file: %v", err)
-		panic(err)
+	fm := string(data)
+
+	var buf bytes.Buffer
+	buf.WriteString(fm)
+	buf.WriteString("\n\n")
+	buf.WriteString(fmt.Sprintf("<!-- TODO: translate from %s -->\n", srcPath))
+
+	err = os.MkdirAll(filepath.Dir(targetPath), 0755)
+	if err != nil {
+		fmt.Println("mkdir failed:", targetPath)
+		return
+	}
+
+	err = os.WriteFile(targetPath, buf.Bytes(), 0644)
+	if err != nil {
+		fmt.Println("write failed:", targetPath)
+		return
+	}
+
+	fmt.Println("generated:", targetPath)
+}
+
+func main() {
+	flag.Parse()
+	if err := run(); err != nil {
+		log.Error().Err(err).Send()
 	}
 }
