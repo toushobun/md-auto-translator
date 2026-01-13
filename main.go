@@ -45,7 +45,7 @@ func run() error {
 }
 
 func createScaffold(srcPath, srcRoot, outRoot, target string) {
-	targetPath := strings.Replace(srcPath, srcRoot, filepath.Join(outRoot, target+".md"), 1)
+	targetPath := strings.Replace(srcPath, srcRoot, outRoot, 1)
 
 	if _, err := os.Stat(targetPath); err == nil {
 		return // already exists
